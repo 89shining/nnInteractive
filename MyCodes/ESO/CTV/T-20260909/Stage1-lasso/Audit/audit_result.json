@@ -1,0 +1,71 @@
+{
+  "result": "BLOCKED",
+  "repo": "D:\\project\\nnInteractive",
+  "model_dir": "D:\\project\\nnInteractive\\nnInteractive_v1.0",
+  "fingerprints": {
+    "repository_git_commit": "7ee5d202d3d927e840c2a23b8e6c635bc554fbcf",
+    "audit_script_sha256": "ae9b4e0692c19403449a0a590365074467a680ae57abef9ca1da7e78af766d1d",
+    "inference_session_py_sha256": "a9f6f14f529fc5693764b99ebc5c9f50a306d0bf2d3aea10f2d4071aea53bd78",
+    "crop_py_sha256": "dd9a0b67a2e99e76047b104e1dbc9feb7accd5dac5d70893c4e8fc90693c85b7",
+    "model_checkpoint_sha256": "b3ac4421f85457bbd1aa0d87f5e67bcb7bc8e2ce6b824b6ac45077cc5d630ea9",
+    "model_checkpoint_size_bytes": 411387150,
+    "model_checkpoint_mtime_ns": 1788965001825625900
+  },
+  "findings": [
+    {
+      "name": "official model bundle",
+      "status": "PASS",
+      "evidence": "requires dataset.json, plans.json, and fold_0/checkpoint_final.pth"
+    },
+    {
+      "name": "official lasso representation",
+      "status": "PASS",
+      "evidence": "README defines a lasso as a one-slice closed contour"
+    },
+    {
+      "name": "positive-lasso interaction channel",
+      "status": "PASS",
+      "evidence": "add_lasso_interaction writes positive lasso to channel -6"
+    },
+    {
+      "name": "native interaction decay",
+      "status": "PASS",
+      "evidence": "batch wrapper may bypass sequential decay only after unit-strength verification"
+    },
+    {
+      "name": "union ROI entry point",
+      "status": "PASS",
+      "evidence": "native generic image helper derives queue initialization from nonzero extent"
+    },
+    {
+      "name": "last-center default risk",
+      "status": "PASS",
+      "evidence": "joint wrapper must enqueue one union item, not K native entries"
+    },
+    {
+      "name": "native inference-only path",
+      "status": "PASS",
+      "evidence": "validation may use _predict; differentiable training requires a wrapper"
+    },
+    {
+      "name": "raw-logit interception point",
+      "status": "PASS",
+      "evidence": "training wrapper must retain the two-class tensor before argmax"
+    },
+    {
+      "name": "overwrite write-back semantics",
+      "status": "PASS",
+      "evidence": "native spatial policy is last-write-wins"
+    },
+    {
+      "name": "runtime full-supervision coverage",
+      "status": "BLOCKED",
+      "evidence": "static source alone cannot prove that every intended unprompted voxel receives network-derived logits"
+    },
+    {
+      "name": "training/validation patch-sequence equivalence",
+      "status": "BLOCKED",
+      "evidence": "requires a fixed-case A6000 runtime trace comparison before formal training"
+    }
+  ]
+}
