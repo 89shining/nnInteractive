@@ -13,11 +13,11 @@ from prompt_sampler import positive_slices, sample_train
 from prediction_wrapper import JointLassoSession, differentiable_predict_joint
 from losses import unprompted_dice_ce, unprompted_hard_dice, whole_volume_hard_dice
 
-DATA = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
-SPLITS = Path('/home/intern/ftp/wusi/SAM2/MyTrain/MyCodes/ESO/CTV/T-20260901/shared_splits.json')
-PLAN = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
-MODEL = Path('/home/intern/ftp/wusi/nnInteractive/nnInteractive_v1.0')
-OUT = Path('/home/intern/ftp/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage1-lasso/TrainResults')
+DATA = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
+SPLITS = Path('/home/wusi/SAM2/MyTrain/MyCodes/ESO/CTV/T-20260901/shared_splits.json')
+PLAN = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
+MODEL = Path('/home/wusi/nnInteractive/nnInteractive_v1.0')
+OUT = Path('/home/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage1-lasso/TrainResults')
 TRAINING_CODE_FILES=(
   'coordinate_adapter.py','dataset.py','differentiable_buffer.py','interaction_builder.py',
   'losses.py','prediction_wrapper.py','prompt_sampler.py','train.py',

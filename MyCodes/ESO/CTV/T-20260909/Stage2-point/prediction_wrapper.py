@@ -17,7 +17,7 @@ def _add_project_root() -> None:
     candidates = []
     configured = os.environ.get("NNINTERACTIVE_PROJECT_ROOT")
     if configured: candidates.append(Path(configured))
-    candidates += [Path("/home/intern/ftp/wusi/nnInteractive"), *Path(__file__).resolve().parents]
+    candidates += [Path("/home/wusi/nnInteractive"), *Path(__file__).resolve().parents]
     for root in candidates:
         if (root / "nnInteractive").is_dir():
             # A pip package with the same name may already be installed. Force
@@ -110,6 +110,15 @@ def snapshot_prediction_state(session: JointLassoSession) -> PredictionSnapshot:
     )
 
 
+def _normal_detached(value: torch.Tensor) -> torch.Tensor:
+    """Copy an inference-mode tensor into normal storage safe for backward."""
+    value = value.detach()
+    with torch.inference_mode(False):
+        result = torch.empty(value.shape, device=value.device, dtype=value.dtype)
+        result.copy_(value)
+    if result.is_inference(): raise RuntimeError("Could not normalize inference tensor")
+    return result
+
 def isolated_replay_session(source: JointLassoSession, snapshot: PredictionSnapshot) -> JointLassoSession:
     """Create an independent mutable session state sharing only model/read-only data.
 
@@ -131,27 +140,53 @@ def isolated_replay_session(source: JointLassoSession, snapshot: PredictionSnaps
         "preferred_scribble_thickness", "point_interaction", "preprocessed_image",
         "preprocessed_props", "original_image_shape", "interaction_decay",
     ):
-        setattr(replay, name, getattr(source, name))
-    replay.interactions = snapshot.interactions.clone()
+        value = getattr(source, name)
+        # Native preprocessing may materialize this tensor inside inference_mode.
+        # The terminal replay must own normal tensor storage for autograd.
+        if name == "preprocessed_image" and isinstance(value, torch.Tensor): value = _normal_detached(value)
+        setattr(replay, name, value)
+    replay.interactions = _normal_detached(snapshot.interactions)
     replay.new_interaction_centers = [list(center) for center in snapshot.centers]
     replay.new_interaction_zoom_out_factors = list(snapshot.zoom_factors)
     replay.has_positive_bbox = snapshot.has_positive_bbox
     target = snapshot.target_buffer
-    replay.target_buffer = target.clone() if isinstance(target, torch.Tensor) else (target.copy() if isinstance(target, np.ndarray) else None)
+    replay.target_buffer = _normal_detached(target) if isinstance(target, torch.Tensor) else (target.copy() if isinstance(target, np.ndarray) else None)
     return replay
 
+def _tensor_info(name, x):
+    if os.environ.get("NNI_TENSOR_DEBUG") != "1": return
+    if isinstance(x, torch.Tensor):
+        print(name, "shape=", tuple(x.shape), "device=", x.device, "dtype=", x.dtype, "requires_grad=", x.requires_grad, "is_inference=", x.is_inference(), flush=True)
+
 def _network_forward(session: JointLassoSession, network_input: torch.Tensor, *, activation_checkpointing: bool) -> torch.Tensor:
-    """Forward with optional activation recomputation; output semantics are unchanged."""
-    batched = network_input[None]
-    if activation_checkpointing and torch.is_grad_enabled():
-        return checkpoint(session.network, batched, use_reentrant=False)[0]
-    return session.network(batched)[0]
+    _tensor_info("network_input", network_input)
+    _tensor_info("preprocessed_image", session.preprocessed_image)
+    _tensor_info("interactions", session.interactions)
+    _tensor_info("target_buffer", session.target_buffer)
+    assert not network_input.is_inference(), "terminal network_input is inference"
+    handles=[]
+    def make_hook(name):
+        def hook(module, inputs):
+            for i,x in enumerate(inputs):
+                if isinstance(x,torch.Tensor) and x.is_inference(): raise RuntimeError(f"Inference tensor reached Conv3D: {name}, input={i}, shape={tuple(x.shape)}")
+            if module.weight.is_inference(): raise RuntimeError(f"Inference Conv3D weight: {name}")
+            if module.bias is not None and module.bias.is_inference(): raise RuntimeError(f"Inference Conv3D bias: {name}")
+        return hook
+    for name,module in session.network.named_modules():
+        if isinstance(module,torch.nn.Conv3d): handles.append(module.register_forward_pre_hook(make_hook(name)))
+    try:
+        batched=network_input[None]; assert not batched.is_inference()
+        return checkpoint(session.network,batched,use_reentrant=False)[0] if activation_checkpointing and torch.is_grad_enabled() else session.network(batched)[0]
+    finally:
+        for h in handles: h.remove()
 
 def _build_input(session: JointLassoSession, center: list[int], zoom: float):
     scaled_size = [round(v * zoom) for v in session.configuration_manager.patch_size]
     bbox = [[c - p // 2, c + p // 2 + p % 2] for c, p in zip(center, scaled_size)]
     image, image_pad = crop_to_valid(session.preprocessed_image, bbox)
     interactions, interaction_pad = crop_to_valid(session.interactions, bbox)
+    if image.is_inference() or interactions.is_inference():
+        raise RuntimeError(f"Replay inference provenance: image={image.is_inference()} interactions={interactions.is_inference()}")
     image = image.to(session.device, non_blocking=True)
     interactions = interactions.to(session.device, non_blocking=True)
     if tuple(scaled_size) != tuple(session.configuration_manager.patch_size):

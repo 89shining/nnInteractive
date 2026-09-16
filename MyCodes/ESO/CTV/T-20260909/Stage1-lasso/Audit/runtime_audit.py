@@ -11,9 +11,9 @@ from interaction_builder import joint_axial_lasso, connected_components_4
 from prediction_wrapper import JointLassoSession, differentiable_predict_joint
 from nnInteractive.inference import inference_session as native_session_module
 
-DATA=Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
-PLAN=Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
-MODEL=Path('/home/intern/ftp/wusi/nnInteractive/nnInteractive_v1.0')
+DATA=Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
+PLAN=Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
+MODEL=Path('/home/wusi/nnInteractive/nnInteractive_v1.0')
 
 class TraceSession(JointLassoSession):
     def __init__(self,*a,**k): super().__init__(*a,**k); self.native_trace=[]; self._capture_refinement=False

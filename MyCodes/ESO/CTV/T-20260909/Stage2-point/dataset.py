@@ -33,6 +33,11 @@ def load_case(path: Path) -> tuple[np.ndarray, np.ndarray]:
         raise ValueError(f"Expected Z=5 mm: {path}, {image_obj.GetSpacing()}")
     return image, ctv
 
+def load_case_with_spacing(path: Path) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float]]:
+    image, ctv = load_case(path)
+    spacing_xyz = sitk.ReadImage(str(path / "image.nii.gz")).GetSpacing()
+    return image, ctv, (float(spacing_xyz[2]), float(spacing_xyz[1]), float(spacing_xyz[0]))
+
 def spacing_zyx(path: Path) -> tuple[float, float, float]:
     """Physical spacing aligned with ``sitk.GetArrayFromImage`` [Z,Y,X]."""
     spacing_xyz = sitk.ReadImage(str(path / "image.nii.gz")).GetSpacing()

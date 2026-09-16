@@ -20,17 +20,16 @@ class CorrectionClick:
         return x, y, z
 
 
-def _components(mask: np.ndarray) -> list[np.ndarray]:
+def _largest_component(mask: np.ndarray, error_type: str):
     labels, count = ndimage.label(mask, structure=np.ones((3, 3, 3), dtype=np.uint8))
-    return [labels == index for index in range(1, int(count) + 1)]
-
-
-def _lexicographic_first(mask: np.ndarray) -> tuple[int, int, int]:
-    coords = np.argwhere(mask)
-    if len(coords) == 0:
-        raise ValueError("Expected nonempty connected component")
-    return tuple(int(value) for value in coords[0])
-
+    if count == 0: return None
+    sizes = np.bincount(labels.ravel(), minlength=int(count) + 1); sizes[0] = 0
+    largest = int(sizes.max()); best = None
+    for index in np.flatnonzero(sizes == largest):
+        first = tuple(int(v) for v in np.argwhere(labels == index)[0])
+        candidate = (-largest, first, error_type, int(index))
+        if best is None or candidate < best: best = candidate
+    return best, labels
 
 def next_error_click(
     prediction_zyx: np.ndarray,
@@ -58,16 +57,17 @@ def next_error_click(
     # Identical to SAM2's oracle: evaluate *every* 26-connected FN/FP
     # component, then break ties by its lexicographically first [Z,Y,X] voxel
     # and finally FN before FP.
-    candidates: list[tuple[int, tuple[int, int, int], str, np.ndarray]] = []
+    winner = None; winning_labels = None
     for error_type, residual in (("FN", truth & ~pred), ("FP", pred & ~truth)):
-        residual = residual.copy()
-        residual[excluded] = False
-        for component in _components(residual):
-            candidates.append((int(component.sum()), _lexicographic_first(component), error_type, component))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
-    _, _, error_type, component = candidates[0]
+        residual = residual.copy(); residual[excluded] = False
+        item = _largest_component(residual, error_type)
+        if item is None: continue
+        candidate, labels = item
+        if winner is None or candidate < winner:
+            winner, winning_labels = candidate, labels
+    if winner is None: return None
+    _, _, error_type, label = winner
+    component = winning_labels == label
     positive = error_type == "FN"
     distance = ndimage.distance_transform_edt(component, sampling=spacing_zyx)
     points = np.argwhere(component)

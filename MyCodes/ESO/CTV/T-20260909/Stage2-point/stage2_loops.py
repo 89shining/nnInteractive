@@ -27,6 +27,7 @@ class EpisodeResult:
     clicks: list[CorrectionClick]
     coverage_fraction: float
     native_prediction: torch.Tensor | None
+    prediction_stats: dict[str, int]
 
 
 def _terminal_logits(
@@ -37,12 +38,11 @@ def _terminal_logits(
     """Replay S(T-) in a distinct mutable session and return loss-only logits."""
     replay = isolated_replay_session(source, snapshot)
     try:
-        return differentiable_predict_joint(
-            replay,
-            complete_coverage=True,
-            activation_checkpointing=True,
-            prompt_slices=prompts,
-        )[:2]
+        with torch.inference_mode(False):
+            logits, coverage = differentiable_predict_joint(
+                replay, complete_coverage=True, activation_checkpointing=True, prompt_slices=prompts,
+            )[:2]
+        return logits, coverage, dict(replay.last_prediction_stats)
     finally:
         # Executor owns no source state, but shutting it down avoids accumulating
         # idle worker threads across patient episodes.
@@ -58,41 +58,58 @@ def train_episode(
     budget: int,
     rng: random.Random,
     device: torch.device,
+    native_session: JointLassoSession | None = None,
 ) -> EpisodeResult:
     """One patient update: native intermediate trajectory, terminal replay only."""
     if budget < 0 or budget > 5:
         raise ValueError("Stage-2 correction budget must be in 0..5")
     prompts = sorted(set(map(int, prompt_slices)))
-    session.set_joint_lassos(image_zyx, joint_axial_lasso(target_zyx, prompts))
-    # S(0-) is queued by set_joint_lassos. T=0 intentionally does not perform
-    # a wasteful native P0: it directly supervises its isolated raw-logit replay.
-    terminal_snapshot = snapshot_prediction_state(session)
+    lasso = joint_axial_lasso(target_zyx, prompts)
+    # The terminal trainable session never enters inference_mode. Native control
+    # predictions run in a separate same-weight session when supplied.
+    session.set_joint_lassos(image_zyx, lasso)
+    terminal_snapshot = snapshot_prediction_state(session)  # T=0 state
     clicks: list[CorrectionClick] = []
     native_prediction: torch.Tensor | None = None
+    native = session if native_session is None else native_session
 
     if budget > 0:
-        session.begin_native_trajectory()
-        # Native states exist solely for residual/click generation. Keep this
-        # explicit even though the current official _predict is inference-mode.
-        with torch.inference_mode():
-            native_prediction = session.native_predict_queued()  # P0 native
+        if native is session:
+            session.begin_native_trajectory()
+        else:
+            # Consume the terminal lasso queue without executing its network;
+            # interactions persist while the first queued terminal item becomes
+            # the correction point, matching S(1-).
+            session.begin_native_trajectory()
+            session.new_interaction_centers = []
+            session.new_interaction_zoom_out_factors = []
+            native.set_joint_lassos(image_zyx, lasso)
+            native.begin_native_trajectory()
+        with torch.inference_mode(), torch.amp.autocast("cuda", enabled=False):
+            native_prediction = native.native_predict_queued()  # P0 control only
         for _ in range(1, budget + 1):
             click = next_error_click(
                 native_prediction.detach().cpu().numpy(), target_zyx, prompts,
                 spacing_zyx, rng=rng,
             )
-            # Exact P(t-1) has no error. The latest snapshot still reproduces
-            # that state, so it is the correct supervised terminal instead of
-            # inventing a zero-information correction point.
             if click is None:
                 break
             session.add_point_interaction(click.xyz, include_interaction=click.positive, run_prediction=False)
             terminal_snapshot = snapshot_prediction_state(session)  # S(t-)
-            with torch.inference_mode():
-                native_prediction = session.native_predict_queued()  # Pt native
             clicks.append(click)
+            # P_T is terminal differentiable replay, not a redundant native pass.
+            if len(clicks) < budget:
+                if native is not session:
+                    # The replay snapshot owns this queue item. Keep its encoded
+                    # interaction channels, but consume the terminal queue so the
+                    # next correction is again the single pending terminal item.
+                    session.new_interaction_centers = []
+                    session.new_interaction_zoom_out_factors = []
+                    native.add_point_interaction(click.xyz, include_interaction=click.positive, run_prediction=False)
+                with torch.inference_mode(), torch.amp.autocast("cuda", enabled=False):
+                    native_prediction = native.native_predict_queued()  # P_t for next click
 
-    logits, coverage = _terminal_logits(session, terminal_snapshot, prompts)
+    logits, coverage, prediction_stats = _terminal_logits(session, terminal_snapshot, prompts)
     loss_mask = torch.ones(target_zyx.shape, dtype=torch.bool, device=device)
     loss_mask[torch.as_tensor(prompts, device=device)] = False
     if not bool(coverage[loss_mask].all()):
@@ -107,6 +124,7 @@ def train_episode(
         clicks=clicks,
         coverage_fraction=float(coverage.float().mean().item()),
         native_prediction=native_prediction,
+        prediction_stats=prediction_stats,
     )
 
 
@@ -145,8 +163,8 @@ def validate_fold(session: JointLassoSession, val_cases, plan: dict[str, Any], f
     """K=3, two fixed Stage-1 placements; patient-average then cohort-average."""
     per_patient: list[np.ndarray] = []
     for index, case in enumerate(val_cases, 1):
-        from dataset import load_case, patient_id, spacing_zyx as read_spacing
-        image, target = load_case(case)
+        from dataset import load_case_with_spacing, patient_id
+        image, target, case_spacing = load_case_with_spacing(case)
         record = plan["folds"][str(fold)][str(patient_id(case))]
         placements = record["placements"]["3"]
         if len(placements) != 2:
@@ -154,7 +172,7 @@ def validate_fold(session: JointLassoSession, val_cases, plan: dict[str, Any], f
         scores = []
         for placement in placements:
             prompts = list(map(int, placement["prompt_frame_ids"]))
-            one, _ = validate_case(session, image, target, read_spacing(case), prompts, device)
+            one, _ = validate_case(session, image, target, case_spacing, prompts, device)
             scores.append(one)
         per_patient.append(np.mean(np.asarray(scores, dtype=np.float64), axis=0))
         print(f"[val fold{fold} patient {index}/{len(val_cases)}] {case.name}")

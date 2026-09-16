@@ -1,0 +1,61 @@
+{
+  "patient": "p_9",
+  "fold": 0,
+  "patch_size_xyz": [
+    192,
+    192,
+    192
+  ],
+  "runs": [
+    {
+      "K": 1,
+      "prompt_slices": [
+        74
+      ],
+      "loss": 0.4724504351615906,
+      "coverage_before_completion": 3686400,
+      "coverage_after_completion": 26214400,
+      "unprompted_voxels": 25952256,
+      "stats": {
+        "native_forwards": 1,
+        "completion_forwards": 9,
+        "grid_tiles": 9,
+        "skipped_tiles": 0,
+        "filled_voxels": 22528000,
+        "native_covered_voxels": 3686400,
+        "final_covered_voxels": 26214400
+      },
+      "peak_allocated_bytes": 12690382848,
+      "peak_reserved_bytes": 16135487488,
+      "forward_seconds": 4.451306967064738,
+      "backward_seconds": 5.021621361374855
+    },
+    {
+      "K": 5,
+      "prompt_slices": [
+        50,
+        59,
+        62,
+        66,
+        75
+      ],
+      "loss": 0.359488844871521,
+      "coverage_before_completion": 3686400,
+      "coverage_after_completion": 26214400,
+      "unprompted_voxels": 24903680,
+      "stats": {
+        "native_forwards": 1,
+        "completion_forwards": 9,
+        "grid_tiles": 9,
+        "skipped_tiles": 0,
+        "filled_voxels": 22528000,
+        "native_covered_voxels": 3686400,
+        "final_covered_voxels": 26214400
+      },
+      "peak_allocated_bytes": 12690903552,
+      "peak_reserved_bytes": 16108224512,
+      "forward_seconds": 3.3891840241849422,
+      "backward_seconds": 4.862414238974452
+    }
+  ]
+}

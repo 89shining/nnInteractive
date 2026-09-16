@@ -15,9 +15,9 @@ from interaction_builder import joint_axial_lasso
 from losses import unprompted_dice_ce
 from prediction_wrapper import JointLassoSession, differentiable_predict_joint
 
-DATA = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
-PLAN = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
-MODEL = Path('/home/intern/ftp/wusi/nnInteractive/nnInteractive_v1.0')
+DATA = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
+PLAN = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
+MODEL = Path('/home/wusi/nnInteractive/nnInteractive_v1.0')
 
 def main() -> None:
     parser = argparse.ArgumentParser()

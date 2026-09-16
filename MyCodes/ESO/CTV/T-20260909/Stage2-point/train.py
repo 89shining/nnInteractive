@@ -14,18 +14,18 @@ import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from dataset import load_case, patient_dirs, patient_id, spacing_zyx
+from dataset import load_case_with_spacing, patient_dirs, patient_id
 from prompt_sampler import positive_slices, sample_train
 from prediction_wrapper import JointLassoSession
 from stage2_loops import train_episode, validate_fold
 
 
-DATA = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
-SPLITS = Path('/home/intern/ftp/wusi/SAM2/MyTrain/MyCodes/ESO/CTV/T-20260901/shared_splits.json')
-PLAN = Path('/home/intern/ftp/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
-MODEL = Path('/home/intern/ftp/wusi/nnInteractive/nnInteractive_v1.0')
-STAGE1 = Path('/home/intern/ftp/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage1-lasso/TrainResults')
-OUT = Path('/home/intern/ftp/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage2-point/TrainResults')
+DATA = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/PreprocessDataNii/train')
+SPLITS = Path('/home/wusi/SAM2/MyTrain/MyCodes/ESO/CTV/T-20260901/shared_splits.json')
+PLAN = Path('/home/wusi/SAM2/MyTrain/SAM2data/Eso/20260909_CTV/Stage1-mask/TrainResults/validation_prompt_plan.json')
+MODEL = Path('/home/wusi/nnInteractive/nnInteractive_v1.0')
+STAGE1 = Path('/home/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage1-lasso/TrainResults')
+OUT = Path('/home/wusi/nnInteractive/MyResults/Eso/20260909_CTV/Stage2-point/TrainResults')
 
 
 def parse_args():
@@ -115,6 +115,11 @@ def run_fold(args, spec, plan, device: torch.device):
 
     session = JointLassoSession(device=device, do_autozoom=True, verbose=False, use_pinned_memory=True)
     session.initialize_from_trained_model_folder(str(args.model_dir), use_fold=0)
+    # Native trajectory uses an independent inference-only copy. The trainable
+    # terminal network never enters inference_mode, preventing runtime caches
+    # from becoming inference tensors before backward.
+    native_session = JointLassoSession(device=device, do_autozoom=True, verbose=False, use_pinned_memory=True)
+    native_session.initialize_from_trained_model_folder(str(args.model_dir), use_fold=0)
     model = session.network
     stage1_state = torch.load(stage1_ckpt, map_location=device, weights_only=False)
     model.load_state_dict(stage1_state['model_state_dict'], strict=True)
@@ -146,15 +151,16 @@ def run_fold(args, spec, plan, device: torch.device):
     with log_path.open('a', newline='') as log_file:
         writer = csv.DictWriter(log_file, fieldnames=[
             'epoch', 'loss_total', 'mean_budget', 'mean_realized_clicks', 'coverage_fraction',
-            'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'S_workflow', 'delta_D5', 'seconds',
+            'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'S_workflow', 'delta_D5', 'seconds', 'native_forwards', 'completion_forwards', 'grid_tiles', 'skipped_tiles', 'filled_voxels',
         ])
         if write_header:
             writer.writeheader()
+        audit_done = False
         for epoch in range(start, args.epochs + 1):
             model.train()
             started = time.time()
             losses, budgets, realized, coverage = [], [], [], []
-            first = True
+            native_forwards, completion_forwards, grid_tiles, skipped_tiles, filled_voxels = [], [], [], [], []
             epoch_cases = list(spec['train'])
             # Match Stage-1's shuffled patient exposure while keeping resume
             # behaviour deterministic for a fixed epoch/fold/seed.
@@ -162,28 +168,30 @@ def run_fold(args, spec, plan, device: torch.device):
                 args.seed + fold * 10_000_019 + epoch * 1_000_003
             ).shuffle(epoch_cases)
             for case in epoch_cases:
-                image, target = load_case(case)
+                image, target, case_spacing = load_case_with_spacing(case)
                 rng = random.Random(args.seed + fold * 10_000_019 + epoch * 1_000_003 + patient_id(case))
                 prompts = sample_train(positive_slices(target), rng, gap=2)
                 budget = rng.randrange(6)  # Uniform T in {0,1,2,3,4,5}.
+                # Synchronize native control weights after the preceding optimizer step.
+                native_session.network.load_state_dict(model.state_dict(), strict=True)
+                native_session.network.eval()
                 optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast('cuda', dtype=torch.bfloat16, enabled=device.type == 'cuda'):
-                    result = train_episode(session, image, target, spacing_zyx(case), prompts, budget, rng, device)
+                    result = train_episode(session, image, target, case_spacing, prompts, budget, rng, device, native_session=native_session)
                 if not torch.isfinite(result.loss):
                     raise RuntimeError(f'{case.name}: non-finite terminal loss')
                 result.loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                if first:
+                if not audit_done:
                     audit_name, audit_parameter = gradient_audit(model)
                     before = audit_parameter.detach().clone()
                 optimizer.step()
-                if first and not bool((audit_parameter.detach() - before).abs().max() > 0):
-                    raise RuntimeError(f'Optimizer update audit failed for {audit_name}')
-                first = False
-                losses.append(float(result.loss.detach()))
-                budgets.append(result.budget)
-                realized.append(result.realized_clicks)
-                coverage.append(result.coverage_fraction)
+                if not audit_done:
+                    if not bool((audit_parameter.detach() - before).abs().max() > 0): raise RuntimeError(f'Optimizer update audit failed for {audit_name}')
+                    audit_done = True
+                losses.append(float(result.loss.detach())); budgets.append(result.budget); realized.append(result.realized_clicks); coverage.append(result.coverage_fraction)
+                stats = result.prediction_stats
+                native_forwards.append(stats['native_forwards']); completion_forwards.append(stats['completion_forwards']); grid_tiles.append(stats['grid_tiles']); skipped_tiles.append(stats['skipped_tiles']); filled_voxels.append(stats['filled_voxels'])
             scheduler.step()
 
             metrics = None
@@ -203,7 +211,7 @@ def run_fold(args, spec, plan, device: torch.device):
             row = {
                 'epoch': epoch, 'loss_total': float(np.mean(losses)), 'mean_budget': float(np.mean(budgets)),
                 'mean_realized_clicks': float(np.mean(realized)), 'coverage_fraction': float(np.mean(coverage)),
-                'seconds': time.time() - started,
+                'seconds': time.time() - started, 'native_forwards': float(np.mean(native_forwards)), 'completion_forwards': float(np.mean(completion_forwards)), 'grid_tiles': float(np.mean(grid_tiles)), 'skipped_tiles': float(np.mean(skipped_tiles)), 'filled_voxels': float(np.mean(filled_voxels)),
             }
             if metrics:
                 row.update(metrics)
@@ -216,6 +224,7 @@ def run_fold(args, spec, plan, device: torch.device):
                 break
     (run_dir / 'completed.flag').write_text('completed\n')
     session.executor.shutdown(wait=False, cancel_futures=True)
+    native_session.executor.shutdown(wait=False, cancel_futures=True)
 
 
 def main():

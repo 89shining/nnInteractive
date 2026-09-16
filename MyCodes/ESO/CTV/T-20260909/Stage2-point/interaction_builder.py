@@ -54,13 +54,11 @@ def closed_contour(mask_yx: np.ndarray) -> np.ndarray:
     return (mask & ~interior).astype(np.float32)
 
 def joint_axial_lasso(mask_zyx: np.ndarray, prompt_slices: list[int]) -> np.ndarray:
-    """Joint unit-strength contours for K prompted slices, including all components."""
+    """Joint unit-strength 4-neighbour contours for K prompted slices."""
     result = np.zeros_like(mask_zyx, dtype=np.float32)
     for z in sorted(set(map(int, prompt_slices))):
-        components = component_masks_4(mask_zyx[z])
-        if not components:
-            raise ValueError(f"Prompt slice {z} is empty")
-        for component in components:
-            result[z] = np.maximum(result[z], closed_contour(component))
+        mask = np.asarray(mask_zyx[z], dtype=bool)
+        if not mask.any(): raise ValueError(f"Prompt slice {z} is empty")
+        result[z] = closed_contour(mask)
     if float(result.max()) != 1.0: raise RuntimeError("Lasso must have unit strength")
     return result

@@ -15,7 +15,7 @@ def _add_project_root() -> None:
     candidates = []
     configured = os.environ.get("NNINTERACTIVE_PROJECT_ROOT")
     if configured: candidates.append(Path(configured))
-    candidates += [Path("/home/intern/ftp/wusi/nnInteractive"), *Path(__file__).resolve().parents]
+    candidates += [Path("/home/wusi/nnInteractive"), *Path(__file__).resolve().parents]
     for root in candidates:
         if (root / "nnInteractive").is_dir():
             # A pip package with the same name may already be installed. Force
